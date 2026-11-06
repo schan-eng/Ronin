@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { ALLOWLIST, LICENSE_FILE_NAMES, detectLicense, isAllowed } from '../lock/license.js';
+import { LICENSE_FILE_NAMES, detectLicense, licensePolicyDiagnostic } from '../lock/license.js';
 import type { Lock } from '../lock/lockfile.js';
 import { error } from './diagnostics.js';
 import type { Diagnostic } from './diagnostics.js';
@@ -29,8 +29,9 @@ function compare(a: string, b: string): number {
  *
  * A `<source>/<skill>` reference is not resolved yet: it is skipped, with no diagnostic, and `lock` is not read.
  *
- * `pack.skills` is filled in plain string order of skill id, and keeps `project.packs` order. A skill that
- * several packs use is read once and is the same object in each.
+ * `pack.skills` is filled in plain string order of skill id, but JavaScript enumerates integer-like keys
+ * (a skill named `9`) first, so consumers must sort the keys themselves. Packs keep `project.packs` order.
+ * A skill that several packs use is read once and is the same object in each.
  */
 export async function resolveLibrary(
   project: Project,
@@ -110,6 +111,7 @@ async function resolveFirstParty(
   }
 
   const skill = project.firstPartySkills[name]!;
+  // Symbolic links are intentionally dropped here until Task 4.3 adds their diagnostics.
   const { files } = await readTree(path.join(project.root, ...skill.dir.split('/')));
   const resolved = { id: skill.name, description: skill.description, frontmatter: skill.frontmatter, files };
 
@@ -121,14 +123,13 @@ async function resolveFirstParty(
     skillFiles: files,
     repoRootFiles: [],
   });
-  const skillMd = `${skill.dir}/SKILL.md`;
-  if (detected.license === null) {
-    const message = `${JSON.stringify(skill.name)}: license could not be determined (${licenseFile} is not a recognized license text); keep the upstream license file unchanged`;
-    diagnostics.push(error('LICENSE-UNKNOWN', skillMd, message));
-  } else if (!isAllowed(detected.license)) {
-    const message = `${JSON.stringify(skill.name)}: license ${detected.license} is not on the allowlist (${ALLOWLIST.join(', ')})`;
-    diagnostics.push(error('LICENSE-DISALLOWED', skillMd, message));
-  }
+  const licenseProblem = licensePolicyDiagnostic(
+    `${skill.dir}/SKILL.md`,
+    skill.name,
+    detected,
+    'keep the upstream license file unchanged',
+  );
+  if (licenseProblem) diagnostics.push(licenseProblem);
   return {
     ...resolved,
     origin: { kind: 'fork' },

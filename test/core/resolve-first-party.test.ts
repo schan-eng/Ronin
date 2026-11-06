@@ -23,7 +23,8 @@ const UNKNOWN_TEXT = 'All rights reserved. Do not copy.\n';
 
 /** A SKILL.md: one `key: value` frontmatter line per field, then the body. */
 function skillMd(name: string, extra: Record<string, string> = {}): string {
-  const fields = { name, description: `The ${name} skill.`, ...extra };
+  // Quoted, so that a name like `9` stays a string in YAML.
+  const fields = { name: JSON.stringify(name), description: `The ${name} skill.`, ...extra };
   const lines = Object.entries(fields).map(([key, value]) => `${key}: ${value}`);
   return `---\n${lines.join('\n')}\n---\nUse ${name} well.\n`;
 }
@@ -34,7 +35,8 @@ function packYaml(name: string): string {
 
 /** An agent file at `packs/<pack>/agents/<name>.md` referencing `skills`. */
 function agent(pack: string, name: string, skills: string[]): Record<string, string> {
-  const list = skills.length === 0 ? '' : `skills: [${skills.join(', ')}]\n`;
+  // Quoted, so that a reference like `9` stays a string in YAML.
+  const list = skills.length === 0 ? '' : `skills: [${skills.map((s) => JSON.stringify(s)).join(', ')}]\n`;
   return {
     [`packs/${pack}/agents/${name}.md`]: `---\nname: ${name}\ndescription: The ${name} agent.\n${list}---\nYou are ${name}.\n`,
   };
@@ -176,7 +178,10 @@ describe('resolveLibrary: first-party and forked skills', () => {
       severity: 'error',
       rule: 'LICENSE-DISALLOWED',
     });
-    expect(diagnostics[0]!.message).toContain('GPL-3.0');
+    expect(diagnostics[0]!.message).toBe(
+      '"x": license GPL-3.0 is not on the allowlist ' +
+        '(MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, CC0-1.0, CC-BY-4.0)',
+    );
     expect(library.packs[0]!.skills['x']!.license).toEqual({ spdx: 'GPL-3.0', file: 'LICENSE' });
   });
 
@@ -189,6 +194,10 @@ describe('resolveLibrary: first-party and forked skills', () => {
     });
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]).toMatchObject({ path: 'skills/x/SKILL.md', severity: 'error', rule: 'LICENSE-UNKNOWN' });
+    expect(diagnostics[0]!.message).toBe(
+      '"x": license could not be determined (LICENSE.txt is not a recognized license text); ' +
+        'keep the upstream license file unchanged',
+    );
     const skill = library.packs[0]!.skills['x']!;
     expect(skill.origin).toEqual({ kind: 'fork' });
     expect(skill.license).toEqual({ spdx: 'NOASSERTION', file: 'LICENSE.txt' });
@@ -230,6 +239,22 @@ describe('resolveLibrary: first-party and forked skills', () => {
     expect(Object.keys(library.packs[0]!.skills)).toEqual(['1st', 'a-b', 'a1', 'css', 'react', 'vue']);
   });
 
+  it('integer-like skill ids enumerate first in pack.skills, so consumers must sort the keys themselves', async () => {
+    const { library, diagnostics } = await resolve({
+      'packs/web/pack.yaml': packYaml('web'),
+      ...agent('web', 'frontend', ['a', '10', '9']),
+      'skills/a/SKILL.md': skillMd('a'),
+      'skills/10/SKILL.md': skillMd('10'),
+      'skills/9/SKILL.md': skillMd('9'),
+    });
+    expect(diagnostics).toEqual([]);
+    const { skills } = library.packs[0]!;
+    // JavaScript enumerates integer-like keys first, in numeric order, whatever order they were added in.
+    expect(Object.keys(skills)).toEqual(['9', '10', 'a']);
+    // Plain string order, which is what renderers need (the default sort compares UTF-16 code units).
+    expect(Object.keys(skills).sort()).toEqual(['10', '9', 'a']);
+  });
+
   it('only the skills a pack references are in its skills', async () => {
     const { library, diagnostics } = await resolve({
       'packs/web/pack.yaml': packYaml('web'),
@@ -259,21 +284,24 @@ describe('resolveLibrary: first-party and forked skills', () => {
   });
 
   it('a missing skill referenced by two agents is one diagnostic at the first agent file, naming both', async () => {
-    const { library, diagnostics } = await resolve({
-      'packs/zeta/pack.yaml': packYaml('zeta'),
-      ...agent('zeta', 'last', ['ghost']),
-      'packs/alpha/pack.yaml': packYaml('alpha'),
-      ...agent('alpha', 'second', ['ghost']),
-      ...agent('alpha', 'first', ['ghost']),
+    // The loader lists packs `a`, `a-b` (by directory name), but the agent files sort the other way round:
+    // "packs/a-b/..." < "packs/a/..." because "-" (0x2d) sorts before "/" (0x2f). So only an explicit sort of
+    // the agent files puts the `a-b` agent first.
+    const { project, library, diagnostics } = await resolve({
+      'packs/a/pack.yaml': packYaml('a'),
+      ...agent('a', 'zz', ['ghost']),
+      'packs/a-b/pack.yaml': packYaml('a-b'),
+      ...agent('a-b', 'aa', ['ghost']),
     });
+    expect(project.packs.map((p) => p.name)).toEqual(['a', 'a-b']);
     expect(diagnostics).toEqual([
       {
-        path: 'packs/alpha/agents/first.md',
+        path: 'packs/a-b/agents/aa.md',
         severity: 'error',
         rule: 'SKILL-UNRESOLVED',
         message:
           '"ghost" not found at skills/ghost/SKILL.md; referenced by ' +
-          'packs/alpha/agents/first.md, packs/alpha/agents/second.md, packs/zeta/agents/last.md',
+          'packs/a-b/agents/aa.md, packs/a/agents/zz.md',
       },
     ]);
     expect(library.packs.map((p) => Object.keys(p.skills))).toEqual([[], []]);

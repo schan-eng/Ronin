@@ -96,6 +96,11 @@ export interface ResolvedSkill {
 
 /** A pack with the skills of all its agents, keyed by skill id. */
 export interface ResolvedPack extends PackDef {
+  /**
+   * Key order is not meaningful: JavaScript enumerates integer-like keys (a skill named `9`) first, whatever
+   * order they were added in. Consumers that need a deterministic order must sort the keys explicitly, with
+   * plain string comparison (`a < b`).
+   */
   skills: Record<string, ResolvedSkill>;
 }
 

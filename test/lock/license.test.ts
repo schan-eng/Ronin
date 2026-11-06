@@ -6,6 +6,7 @@ import {
   detectLicense,
   identifyLicenseText,
   isAllowed,
+  licensePolicyDiagnostic,
 } from '../../src/lock/license.js';
 import { enc } from '../helpers/fs.js';
 
@@ -370,5 +371,38 @@ describe('isAllowed', () => {
     expect(isAllowed('mit')).toBe(false);
     expect(isAllowed('MIT ')).toBe(false);
     expect(isAllowed('')).toBe(false);
+  });
+});
+
+describe('licensePolicyDiagnostic', () => {
+  it('is undefined for an allowlisted license', () => {
+    expect(licensePolicyDiagnostic('p', 'x', { license: 'MIT', file: 'LICENSE' }, 'fix it')).toBeUndefined();
+  });
+
+  it('LICENSE-UNKNOWN names the license file and ends with the remedy', () => {
+    expect(licensePolicyDiagnostic('skills/x/SKILL.md', 'x', { license: null, file: 'LICENSE.txt' }, 'fix it')).toEqual({
+      path: 'skills/x/SKILL.md',
+      severity: 'error',
+      rule: 'LICENSE-UNKNOWN',
+      message: '"x": license could not be determined (LICENSE.txt is not a recognized license text); fix it',
+    });
+  });
+
+  it('LICENSE-UNKNOWN without a license file has no note', () => {
+    expect(licensePolicyDiagnostic('p', 'src/x', { license: null, file: null }, 'fix it')).toMatchObject({
+      rule: 'LICENSE-UNKNOWN',
+      message: '"src/x": license could not be determined; fix it',
+    });
+  });
+
+  it('LICENSE-DISALLOWED names the license and the allowlist', () => {
+    expect(licensePolicyDiagnostic('ronin.lock', 'src/x', { license: 'GPL-3.0', file: null }, 'fix it')).toEqual({
+      path: 'ronin.lock',
+      severity: 'error',
+      rule: 'LICENSE-DISALLOWED',
+      message:
+        '"src/x": license GPL-3.0 is not on the allowlist ' +
+        '(MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, CC0-1.0, CC-BY-4.0)',
+    });
   });
 });

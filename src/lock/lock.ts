@@ -10,7 +10,7 @@ import { ParseError, parseFrontmatter } from '../core/yaml.js';
 import { ensureCommit } from './cache.js';
 import { resolveRef } from './git.js';
 import { hashSkillFiles } from './hash.js';
-import { ALLOWLIST, LICENSE_FILE_NAMES, detectLicense, isAllowed } from './license.js';
+import { LICENSE_FILE_NAMES, detectLicense, licensePolicyDiagnostic } from './license.js';
 import { emptyLock, readLock, writeLock } from './lockfile.js';
 import type { Lock, LockedSkill } from './lockfile.js';
 
@@ -182,14 +182,13 @@ async function lockSkill(ctx: SkillContext, diagnostics: Diagnostic[]): Promise<
     repoRootFiles,
   });
 
-  if (detected.license === null) {
-    const note = detected.file === null ? '' : ` (${detected.file} is not a recognized license text)`;
-    const message = `${JSON.stringify(ref.id)}: license could not be determined${note}; assert it under licenses in sources.yaml`;
-    diagnostics.push(error('LICENSE-UNKNOWN', LOCK_FILE, message));
-  } else if (!isAllowed(detected.license)) {
-    const message = `${JSON.stringify(ref.id)}: license ${detected.license} is not on the allowlist (${ALLOWLIST.join(', ')})`;
-    diagnostics.push(error('LICENSE-DISALLOWED', LOCK_FILE, message));
-  }
+  const licenseProblem = licensePolicyDiagnostic(
+    LOCK_FILE,
+    ref.id,
+    detected,
+    'assert it under licenses in sources.yaml',
+  );
+  if (licenseProblem) diagnostics.push(licenseProblem);
 
   const locked: LockedSkill = {
     path: skillPath,

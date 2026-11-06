@@ -1,3 +1,5 @@
+import { error } from '../core/diagnostics.js';
+import type { Diagnostic } from '../core/diagnostics.js';
 import type { FileEntry } from '../core/model.js';
 
 /** The licenses a third-party skill may carry (spec 5.9). Anything else is `LICENSE-DISALLOWED`. */
@@ -117,4 +119,28 @@ function fromLicenseFile(files: FileEntry[], from: 'skill-file' | 'repo-root'): 
 /** True when `spdx` is exactly one of `ALLOWLIST`. */
 export function isAllowed(spdx: string): boolean {
   return ALLOWLIST.includes(spdx);
+}
+
+/**
+ * The error for a detected license that the policy rejects (spec 5.9), reported at `path`, or undefined when
+ * the license is allowed: `LICENSE-UNKNOWN` when `detected.license` is null, `LICENSE-DISALLOWED` when it is
+ * not on the allowlist. `skillId` names the skill in the message, and `unknownRemedy` ends the
+ * `LICENSE-UNKNOWN` message, after a semicolon, with what to do about it (it differs by where the skill is from).
+ */
+export function licensePolicyDiagnostic(
+  path: string,
+  skillId: string,
+  detected: Pick<LicenseDetection, 'license' | 'file'>,
+  unknownRemedy: string,
+): Diagnostic | undefined {
+  const name = JSON.stringify(skillId);
+  if (detected.license === null) {
+    const note = detected.file === null ? '' : ` (${detected.file} is not a recognized license text)`;
+    return error('LICENSE-UNKNOWN', path, `${name}: license could not be determined${note}; ${unknownRemedy}`);
+  }
+  if (!isAllowed(detected.license)) {
+    const message = `${name}: license ${detected.license} is not on the allowlist (${ALLOWLIST.join(', ')})`;
+    return error('LICENSE-DISALLOWED', path, message);
+  }
+  return undefined;
 }
