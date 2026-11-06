@@ -69,3 +69,38 @@ export interface Project {
   packs: PackDef[];
   firstPartySkills: Record<string, FirstPartySkill>;
 }
+
+/** Where a resolved skill comes from (spec 5.5). A `fork` is a first-party skill that carries its own license file. */
+export type SkillOrigin =
+  | { kind: 'first-party' }
+  | { kind: 'fork' }
+  | { kind: 'third-party'; repo: string; commit: string; path: string };
+
+/**
+ * A skill with its files read, ready for an adapter (spec 8). A first-party skill is keyed by its name and a
+ * third-party skill by `<source>/<skill>`.
+ */
+export interface ResolvedSkill {
+  id: string;
+  description: string;
+  frontmatter: Record<string, unknown>;
+  /** The skill directory, with paths relative to it. Symbolic links are never in here. */
+  files: FileEntry[];
+  origin: SkillOrigin;
+  /**
+   * Null when the repository license covers the skill. `spdx` is `NOASSERTION` when the license is unknown.
+   * `file` is a path in `files`, or null when there is no license text to ship.
+   */
+  license: { spdx: string; file: string | null } | null;
+}
+
+/** A pack with the skills of all its agents, keyed by skill id. */
+export interface ResolvedPack extends PackDef {
+  skills: Record<string, ResolvedSkill>;
+}
+
+/** The project after resolution: plain data, with no knowledge of any adapter (spec 8). */
+export interface ResolvedLibrary {
+  marketplace: Marketplace;
+  packs: ResolvedPack[];
+}
