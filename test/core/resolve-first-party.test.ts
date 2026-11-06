@@ -366,14 +366,15 @@ describe('resolveLibrary: first-party and forked skills', () => {
     expect(Object.keys(library.packs[0]!.skills)).toEqual([]);
   });
 
-  it('references with a slash are skipped here: no diagnostics, nothing in pack.skills', async () => {
+  it('a reference with a slash is never looked up as a first-party skill (see resolve-third-party.test.ts)', async () => {
+    // With an empty lock the reference is stale; it is not "not found at skills/.../SKILL.md".
     const { library, diagnostics } = await resolve({
       'sources.yaml': SOURCES_YAML,
       'packs/web/pack.yaml': packYaml('web'),
       ...agent('web', 'frontend', ['anthropic/frontend-design', 'react']),
       'skills/react/SKILL.md': skillMd('react'),
     });
-    expect(diagnostics).toEqual([]);
+    expect(diagnostics.map((d) => [d.rule, d.path])).toEqual([['LOCK-STALE', 'ronin.lock']]);
     expect(Object.keys(library.packs[0]!.skills)).toEqual(['react']);
   });
 });

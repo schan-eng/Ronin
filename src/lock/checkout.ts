@@ -53,7 +53,7 @@ export async function readRepoRootLicenseFiles(checkout: string): Promise<FileEn
   return files;
 }
 
-/** `SCHEMA` at `ronin.lock` for a symbolic link, at `upstreamPath` in the source repository, in or on the way to skill `id`. */
+/** `SCHEMA` at `ronin.lock` for a symbolic link in or on the way to skill `id`, at `upstreamPath` in its repository. */
 export function symlinkDiagnostic(id: string, upstreamPath: string): Diagnostic {
   return error('SCHEMA', LOCK_FILE, `${JSON.stringify(id)}: ${SYMLINK_MESSAGE}: ${upstreamPath}`);
 }
