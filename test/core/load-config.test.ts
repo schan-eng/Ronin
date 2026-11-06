@@ -369,6 +369,59 @@ describe('loadProject: ronin.yaml and sources.yaml', () => {
     });
   });
 
+  describe('sources.yaml root stays inside the source repository', () => {
+    const withRoot = (root: string) => ({
+      'ronin.yaml': RONIN_YAML,
+      'sources.yaml': `sources:\n  upstream:\n    repo: https://x/y.git\n    ref: main\n    root: ${root}\n`,
+    });
+
+    it('root: ../x is a SCHEMA error at the root line, and the source is dropped', async () => {
+      const { project, diagnostics } = await loadProject(await makeProject(withRoot('../x')));
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]).toMatchObject({ path: 'sources.yaml', line: 5, severity: 'error', rule: 'SCHEMA' });
+      expect(diagnostics[0]!.message).toContain('root');
+      expect(project.sources).toEqual({});
+    });
+
+    it('root: /etc is a SCHEMA error at the root line, and the source is dropped', async () => {
+      const { project, diagnostics } = await loadProject(await makeProject(withRoot('/etc')));
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]).toMatchObject({ path: 'sources.yaml', line: 5, severity: 'error', rule: 'SCHEMA' });
+      expect(diagnostics[0]!.message).toContain('root');
+      expect(project.sources).toEqual({});
+    });
+
+    it('a .. segment anywhere, a backslash form, or a drive letter is rejected too', async () => {
+      for (const root of ['..', 'skills/../..', 'a/../b', 'a\\..\\b', '\\etc', 'C:\\x', 'C:/x']) {
+        const { diagnostics } = await loadProject(await makeProject(withRoot(JSON.stringify(root))));
+        expect(diagnostics, root).toHaveLength(1);
+        expect(diagnostics[0], root).toMatchObject({ path: 'sources.yaml', line: 5, rule: 'SCHEMA' });
+      }
+    });
+
+    it('a root that is not a string is a plain SCHEMA error', async () => {
+      for (const root of ['5', 'null', '[a]']) {
+        const { diagnostics } = await loadProject(await makeProject(withRoot(root)));
+        expect(diagnostics, root).toHaveLength(1);
+        expect(diagnostics[0], root).toMatchObject({ path: 'sources.yaml', line: 5, rule: 'SCHEMA' });
+      }
+    });
+
+    it('root: skills/sub is accepted', async () => {
+      const { project, diagnostics } = await loadProject(await makeProject(withRoot('skills/sub')));
+      expect(diagnostics).toEqual([]);
+      expect(project.sources['upstream']!.root).toBe('skills/sub');
+    });
+
+    it('names that merely contain dots are accepted', async () => {
+      for (const root of ['.', './skills', '..skills', 'skills..', 'a/..b/c']) {
+        const { project, diagnostics } = await loadProject(await makeProject(withRoot(JSON.stringify(root))));
+        expect(diagnostics, root).toEqual([]);
+        expect(project.sources['upstream']!.root).toBe(root);
+      }
+    });
+  });
+
   it('reports problems in both files in one run', async () => {
     const root = await makeProject({
       'ronin.yaml': 'marketplace:\n  name: ronin\n',
