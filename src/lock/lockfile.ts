@@ -11,8 +11,8 @@ import type { ParsedYaml } from '../core/yaml.js';
 import { COMMIT_RE } from './git.js';
 import type { LicenseFrom } from './license.js';
 
-/** The lockfile, relative to the project root (spec 5.8). */
-const LOCK_FILE = 'ronin.lock';
+/** The lockfile, relative to the project root (spec 5.8). Where diagnostics about the lock and what it pins are reported. */
+export const LOCK_FILE = 'ronin.lock';
 
 export interface LockedSource {
   repo: string;
