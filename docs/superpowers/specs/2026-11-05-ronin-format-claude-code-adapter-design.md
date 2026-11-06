@@ -328,7 +328,7 @@ The CLI is run inside the repository as `npm run ronin -- <command>`.
 
 ## 8. Code structure
 
-TypeScript on Node 20 or later, as ES modules. Dependencies: `yaml`, `zod`, and `vitest` for development. Git is called as a child process, so private hosts and existing credentials work.
+TypeScript on Node 22.12 or later, as ES modules. Dependencies: `yaml`, `zod`, and `vitest` for development. Git is called as a child process, so private hosts and existing credentials work.
 
 ```
 src/core/                 parse, resolve, validate → ResolvedLibrary (no adapter knowledge)

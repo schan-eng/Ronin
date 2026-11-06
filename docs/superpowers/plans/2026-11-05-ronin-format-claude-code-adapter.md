@@ -6,13 +6,13 @@
 
 **Architecture:** `src/core` loads and validates the source format into plain data (`Project`), then resolves skills into a `ResolvedLibrary`. `src/lock` handles git fetching, the content cache, hashing, license detection, and the lockfile. `src/adapters/claude-code` is a pure `ResolvedLibrary → FileTree` function plus its own target-field validation. `src/cli` wires the commands, writes files, and runs the `check` comparisons.
 
-**Tech Stack:** TypeScript (ES modules, strict) on Node ≥ 20. Runtime dependencies: `yaml`, `zod`. Dev dependencies: `typescript`, `vitest`, `tsx`, `@types/node`. Git is invoked via `node:child_process` `execFile`.
+**Tech Stack:** TypeScript (ES modules, strict) on Node ≥ 22.12. Runtime dependencies: `yaml`, `zod`. Dev dependencies: `typescript`, `vitest`, `tsx`, `@types/node`. Git is invoked via `node:child_process` `execFile`.
 
 **Spec:** `docs/superpowers/specs/2026-11-05-ronin-format-claude-code-adapter-design.md`. Read it alongside this plan; section numbers below (§) refer to it.
 
 ## Global Constraints
 
-- `package.json`: `"type": "module"`, `"private": true`, `"engines": { "node": ">=20" }`. Scripts: `"ronin": "tsx src/cli/bin.ts"`, `"test": "vitest run"`, `"typecheck": "tsc --noEmit"`.
+- `package.json`: `"type": "module"`, `"private": true`, `"engines": { "node": ">=22.12" }`. Scripts: `"ronin": "tsx src/cli/bin.ts"`, `"test": "vitest run"`, `"typecheck": "tsc --noEmit"`.
 - The CLI is invoked as `npm run ronin -- <command> [--root <dir>]`. `--root` defaults to the current directory.
 - Names (pack, agent, first-party skill, source): `^[a-z0-9][a-z0-9-]{0,63}$`.
 - Agent `description`: 1 to 300 characters.
@@ -1132,7 +1132,7 @@ If it fails, stop and report the outputs. The fix belongs in the §6.5 prompt te
 
 It runs on `pull_request` and on `push` to `main`:
 1. `actions/checkout@v4` with `fetch-depth: 0`
-2. `actions/setup-node@v4` with Node 20 and npm cache
+2. `actions/setup-node@v4` with Node 22 and npm cache
 3. `npm ci`
 4. `npm run typecheck`
 5. `npm test`
