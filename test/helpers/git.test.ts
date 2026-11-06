@@ -1,12 +1,13 @@
 import { readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { commitUpstream, makeUpstream, runGit } from './git.js';
 
 const made: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(made.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -34,8 +35,9 @@ describe('makeUpstream', () => {
     const a = await upstream({ 'f.txt': 'same' });
     const b = await upstream({ 'f.txt': 'same' });
     expect(a.commit).toBe(b.commit);
-    expect(await runGit(a.dir, ['log', '-1', '--format=%an <%ae> %aI|%cn <%ce> %cI'])).toBe(
-      'ronin-test <test@ronin.invalid> 2026-01-01T00:00:00Z|ronin-test <test@ronin.invalid> 2026-01-01T00:00:00Z',
+    // Epoch seconds: the ISO formats (%aI) print the zone differently across git versions.
+    expect(await runGit(a.dir, ['log', '-1', '--format=%an <%ae> %at|%cn <%ce> %ct'])).toBe(
+      'ronin-test <test@ronin.invalid> 1767225600|ronin-test <test@ronin.invalid> 1767225600',
     );
   });
 
@@ -69,5 +71,33 @@ describe('commitUpstream', () => {
     const up = await upstream({ 'f.txt': 'x' });
     const next = await commitUpstream(up.dir, {});
     expect(next).not.toBe(up.commit);
+  });
+});
+
+// Under a git hook, git exports GIT_DIR, GIT_INDEX_FILE and friends. The helpers must still act on their
+// own directory and never on the repository the test run was started from.
+describe('repository-locating environment', () => {
+  it('makeUpstream, commitUpstream and runGit ignore GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE', async () => {
+    const decoy = await upstream({ 'decoy.txt': 'decoy' });
+
+    vi.stubEnv('GIT_DIR', path.join(decoy.dir, '.git'));
+    vi.stubEnv('GIT_WORK_TREE', decoy.dir);
+    vi.stubEnv('GIT_INDEX_FILE', path.join(decoy.dir, '.git', 'index'));
+    let fresh: Awaited<ReturnType<typeof upstream>>;
+    let next: string;
+    let head: string;
+    try {
+      fresh = await upstream({ 'f.txt': 'x' });
+      next = await commitUpstream(fresh.dir, { 'g.txt': 'y' });
+      head = await runGit(fresh.dir, ['rev-parse', 'HEAD']);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    expect(head).toBe(next);
+    expect(await runGit(fresh.dir, ['ls-files'])).toBe('f.txt\ng.txt');
+    expect(await runGit(decoy.dir, ['rev-parse', 'HEAD'])).toBe(decoy.commit);
+    expect(await runGit(decoy.dir, ['ls-files'])).toBe('decoy.txt');
+    expect(await runGit(decoy.dir, ['status', '--porcelain'])).toBe('');
   });
 });

@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { gitEnv } from '../../src/lock/git.js';
 import { makeProject, writeFiles } from './fs.js';
 import type { ProjectFile } from './fs.js';
 
@@ -33,12 +34,14 @@ export interface Upstream {
 }
 
 /**
- * Runs `git <args>` in `dir` with the pinned identity and dates, and returns trimmed stdout. For test
+ * Runs `git <args>` in `dir` with the pinned identity and dates, and returns trimmed stdout. Like production
+ * git, it does not pass on the variables that locate a repository (see `gitEnv`), so a test run started
+ * from a git hook cannot make it act on the caller's repository. For test
  * set-up that is not covered by `makeUpstream` and `commitUpstream` (tags, branches). Rejects with the
  * stderr in the message if git fails.
  */
 export async function runGit(dir: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync('git', args, { cwd: dir, env: { ...process.env, ...PINNED_ENV } });
+  const { stdout } = await execFileAsync('git', args, { cwd: dir, env: { ...gitEnv(), ...PINNED_ENV } });
   return stdout.trim();
 }
 

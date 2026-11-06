@@ -1,4 +1,4 @@
-import { readFile, readdir, rm, stat } from 'node:fs/promises';
+import { lstat, readFile, readdir, readlink, rm, stat, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -78,6 +78,25 @@ describe('git', () => {
     );
     expect(out).toBe('0|kept');
   });
+
+  // When git prints nothing, the fallback must not be execFile's "Command failed: git <all args>".
+  it.skipIf(process.platform === 'win32')('a silent failure names the exit code, not the arguments', async () => {
+    const bin = await project({ git: { content: '#!/bin/sh\nexit 3\n', executable: true } });
+    vi.stubEnv('PATH', `${bin}${path.delimiter}${process.env.PATH ?? ''}`);
+    const err = await git(['fetch', 'https://user:s3cret-token@example.invalid/repo.git']).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GitError);
+    expect((err as GitError).message).toBe('git fetch failed: exit code 3');
+    expect((err as GitError).stderr).toBe('');
+  });
+
+  it('git that cannot be started is a GitError that does not repeat the arguments', async () => {
+    vi.stubEnv('PATH', await project());
+    const err = await git(['fetch', 'https://user:s3cret-token@example.invalid/repo.git']).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GitError);
+    expect((err as GitError).message).toContain('ENOENT');
+    expect((err as GitError).message).not.toContain('s3cret-token');
+    expect((err as GitError).message).not.toContain('example.invalid');
+  });
 });
 
 // R13: when ronin runs inside a git hook, git exports variables that say which repository to use.
@@ -111,6 +130,7 @@ describe('repository-locating environment (R13)', () => {
       for (const name of LOCAL_ENV_VARS) vi.stubEnv(name, 'leaked');
       vi.stubEnv('GIT_SSH_COMMAND', 'ssh -i key');
       vi.stubEnv('GIT_ASKPASS', 'askpass-helper');
+      vi.stubEnv('GIT_ALLOW_PROTOCOL', 'ext'); // not repository-local, but it would override -c protocol.ext.allow
 
       await git(['status']);
 
@@ -121,11 +141,20 @@ describe('repository-locating environment (R13)', () => {
           .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)] as const),
       );
       for (const name of LOCAL_ENV_VARS) expect(seen.has(name), name).toBe(false);
+      expect(seen.has('GIT_ALLOW_PROTOCOL')).toBe(false);
       expect(seen.get('GIT_SSH_COMMAND')).toBe('ssh -i key');
       expect(seen.get('GIT_ASKPASS')).toBe('askpass-helper');
       expect(seen.get('GIT_TERMINAL_PROMPT')).toBe('0');
     },
   );
+
+  // GIT_ALLOW_PROTOCOL=ext would re-enable the transport that `-c protocol.ext.allow=never` turns off.
+  it.skipIf(process.platform === 'win32')('GIT_ALLOW_PROTOCOL cannot re-enable the ext transport', async () => {
+    const marker = path.join(await project(), 'marker');
+    vi.stubEnv('GIT_ALLOW_PROTOCOL', 'ext');
+    await expect(resolveRef(`ext::touch ${marker}`, 'main')).rejects.toThrow(GitError);
+    expect(await exists(marker)).toBe(false);
+  });
 
   it('ensureCommit fills the cache and leaves the repository named by GIT_DIR/GIT_WORK_TREE alone', async () => {
     const decoy = await upstream({ 'decoy.txt': 'decoy' });
@@ -305,6 +334,65 @@ describe('ensureCommit', () => {
     await expect(ensureCommit(root, '../evil', up.url, up.commit)).rejects.toThrow(GitError);
     expect(await exists(path.join(root, '.ronin'))).toBe(false);
   });
+
+  // The lock hashes the cached bytes, so they must be the committed bytes on every machine.
+  it.skipIf(process.platform === 'win32')(
+    'checks out exactly the committed bytes whatever the user git config and .gitattributes say',
+    async () => {
+      const skill = 'line one\nline two\n';
+      const attributes = '* text=auto eol=crlf\n*.dat filter=shout\n';
+      const up = await upstream({
+        '.gitattributes': attributes,
+        'skills/demo/SKILL.md': skill,
+        'skills/demo/blob.dat': 'plain data\n',
+      });
+      await symlink('SKILL.md', path.join(up.dir, 'skills/demo/link.md'));
+      const commit = await commitUpstream(up.dir, {});
+      const userConfig = path.join(
+        await project({
+          gitconfig: [
+            '[core]',
+            '\tautocrlf = true',
+            '\tsymlinks = false',
+            '[filter "shout"]',
+            '\tsmudge = tr a-z A-Z',
+            '\tclean = cat',
+            '\trequired = true',
+            '',
+          ].join('\n'),
+        }),
+        'gitconfig',
+      );
+      const root = await project();
+
+      vi.stubEnv('GIT_CONFIG_GLOBAL', userConfig);
+      let dir: string;
+      try {
+        dir = await ensureCommit(root, 'up', up.url, commit);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+
+      const demo = path.join(dir, 'skills/demo');
+      expect(await readFile(path.join(demo, 'SKILL.md'), 'utf8')).toBe(skill);
+      expect(await readFile(path.join(demo, 'blob.dat'), 'utf8')).toBe('plain data\n');
+      expect(await readFile(path.join(dir, '.gitattributes'), 'utf8')).toBe(attributes);
+      expect((await lstat(path.join(demo, 'link.md'))).isSymbolicLink()).toBe(true);
+      expect(await readlink(path.join(demo, 'link.md'))).toBe('SKILL.md');
+    },
+  );
+
+  it('rejects a commit id that does not name the commit it fetched, and leaves nothing', async () => {
+    const up = await upstream({ 'SKILL.md': SKILL_V1 });
+    await runGit(up.dir, ['tag', '-a', 'v1', '-m', 'release', up.commit]);
+    const tagObject = await runGit(up.dir, ['rev-parse', 'v1']);
+    expect(tagObject).not.toBe(up.commit);
+    const root = await project();
+
+    await expect(ensureCommit(root, 'up', up.url, tagObject)).rejects.toThrow(GitError);
+
+    expect(await entries(path.join(root, '.ronin', 'cache', 'up'))).toEqual([]);
+  });
 });
 
 describe('option injection (R12)', () => {
@@ -335,16 +423,19 @@ describe('option injection (R12)', () => {
       '#!/bin/sh',
       'printf "%s\\t" "$GIT_TERMINAL_PROMPT" "$@" >> "$RONIN_TEST_LOG"',
       'printf "\\n" >> "$RONIN_TEST_LOG"',
+      '[ "$3" = rev-parse ] && echo "$RONIN_TEST_COMMIT"', // ensureCommit checks the checkout is at the commit
+      'exit 0',
       '',
     ].join('\n');
     const bin = await project({ git: { content: script, executable: true } });
     const logDir = await project();
     const log = path.join(logDir, 'calls.log');
-    vi.stubEnv('PATH', `${bin}${path.delimiter}${process.env.PATH ?? ''}`);
-    vi.stubEnv('RONIN_TEST_LOG', log);
-    vi.stubEnv('GIT_TERMINAL_PROMPT', '1');
     const repo = 'https://example.invalid/repo.git';
     const commit = 'a'.repeat(40);
+    vi.stubEnv('PATH', `${bin}${path.delimiter}${process.env.PATH ?? ''}`);
+    vi.stubEnv('RONIN_TEST_LOG', log);
+    vi.stubEnv('RONIN_TEST_COMMIT', commit);
+    vi.stubEnv('GIT_TERMINAL_PROMPT', '1');
 
     await expect(resolveRef(repo, 'main')).rejects.toThrow(GitError); // the stand-in lists no refs
     const root = await project();
@@ -367,7 +458,13 @@ describe('option injection (R12)', () => {
       'refs/tags/main^{}',
     ]);
 
-    expect(calls.map((c) => c[3])).toEqual(['ls-remote', 'init', 'fetch', 'checkout']);
+    // The subcommand follows the leading `-c <name>=<value>` pairs, after the GIT_TERMINAL_PROMPT column.
+    const subcommands = calls.map((call) => {
+      let i = 1;
+      while (call[i] === '-c') i += 2;
+      return call[i];
+    });
+    expect(subcommands).toEqual(['ls-remote', 'init', 'fetch', 'checkout', 'rev-parse']);
     for (const call of calls) {
       expect(call.slice(0, 3)).toEqual(['0', '-c', 'protocol.ext.allow=never']);
     }
@@ -376,5 +473,21 @@ describe('option injection (R12)', () => {
     expect(dashes).toBeGreaterThan(-1);
     expect(fetchArgs.slice(dashes)).toEqual(['--', repo, commit]);
     expect(fetchArgs.slice(0, dashes)).toEqual(expect.arrayContaining(['--depth', '1']));
+
+    // The checkout must not depend on the user's configuration.
+    expect((calls[3] as string[]).slice(1)).toEqual([
+      '-c',
+      'protocol.ext.allow=never',
+      '-c',
+      'core.autocrlf=false',
+      '-c',
+      'core.eol=lf',
+      '-c',
+      'core.symlinks=true',
+      'checkout',
+      '--quiet',
+      '--detach',
+      'FETCH_HEAD',
+    ]);
   });
 });
