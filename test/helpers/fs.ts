@@ -5,13 +5,11 @@ import path from 'node:path';
 export type ProjectFile = string | { content: string | Uint8Array; executable?: boolean };
 
 /**
- * Writes `files` (keys are `/`-separated paths relative to the project root,
- * parent directories created as needed) under a fresh directory in
- * `os.tmpdir()` and returns that directory. `executable: true` sets mode 0755;
- * every other file gets 0644.
+ * Writes `files` (keys are `/`-separated paths relative to `root`, parent directories created as
+ * needed) into the existing directory `root`, replacing files that are already there.
+ * `executable: true` sets mode 0755; every other file gets 0644.
  */
-export async function makeProject(files: Record<string, ProjectFile>): Promise<string> {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'ronin-test-'));
+export async function writeFiles(root: string, files: Record<string, ProjectFile>): Promise<void> {
   for (const [rel, spec] of Object.entries(files)) {
     const abs = path.join(root, ...rel.split('/'));
     await mkdir(path.dirname(abs), { recursive: true });
@@ -19,6 +17,15 @@ export async function makeProject(files: Record<string, ProjectFile>): Promise<s
     await writeFile(abs, content);
     await chmod(abs, executable ? 0o755 : 0o644);
   }
+}
+
+/**
+ * Writes `files` (see `writeFiles`) under a fresh directory in `os.tmpdir()` and returns that
+ * directory.
+ */
+export async function makeProject(files: Record<string, ProjectFile>): Promise<string> {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ronin-test-'));
+  await writeFiles(root, files);
   return root;
 }
 
