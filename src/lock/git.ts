@@ -9,6 +9,36 @@ export const COMMIT_RE = /^[0-9a-f]{40}$/;
 /** `ls-remote` prints one line per ref; a big repository can have many. */
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
+/**
+ * The variables git sets for its hooks to say which repository to work on: the set `git rev-parse
+ * --local-env-vars` prints. They are not passed on, so a git process started by ronin acts on the directory
+ * it is given (`cwd`, or the remote it is told to fetch) and never on the repository ronin itself was
+ * started from.
+ */
+const REPOSITORY_LOCAL_ENV = [
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_INDEX_FILE',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_COMMON_DIR',
+  'GIT_IMPLICIT_WORK_TREE',
+  'GIT_GRAFT_FILE',
+  'GIT_NO_REPLACE_OBJECTS',
+  'GIT_REPLACE_REF_BASE',
+  'GIT_PREFIX',
+  'GIT_SHALLOW_FILE',
+  'GIT_CONFIG',
+  'GIT_CONFIG_PARAMETERS',
+  'GIT_CONFIG_COUNT',
+] as const;
+
+function childEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+  for (const name of REPOSITORY_LOCAL_ENV) delete env[name];
+  return env;
+}
+
 /** A failed git invocation, or an input that is refused before git runs. */
 export class GitError extends Error {
   /** Trimmed stderr of the failed command; empty when git did not run or printed nothing. */
@@ -27,13 +57,15 @@ export class GitError extends Error {
  *
  * `sources.yaml` and `ronin.lock` can come from a contributor's pull request, so every call runs with the
  * `ext::` transport disabled (it runs arbitrary commands) and with `GIT_TERMINAL_PROMPT=0` (a CI job must
- * fail, not wait for a password). The rest of `process.env` is inherited.
+ * fail, not wait for a password). `process.env` is inherited except for the variables that locate a
+ * repository (`REPOSITORY_LOCAL_ENV`); other `GIT_*` variables such as `GIT_SSH_COMMAND` and `GIT_ASKPASS`
+ * pass through.
  */
 export async function git(args: string[], cwd?: string): Promise<string> {
   try {
     const { stdout } = await execFileAsync('git', ['-c', 'protocol.ext.allow=never', ...args], {
       cwd,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      env: childEnv(),
       maxBuffer: MAX_OUTPUT_BYTES,
     });
     return stdout;

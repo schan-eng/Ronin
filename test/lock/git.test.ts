@@ -80,6 +80,83 @@ describe('git', () => {
   });
 });
 
+// R13: when ronin runs inside a git hook, git exports variables that say which repository to use.
+// Passed on, they would make the init/fetch/checkout in the cache temp dir act on the user's repository.
+describe('repository-locating environment (R13)', () => {
+  const LOCAL_ENV_VARS = [
+    'GIT_DIR',
+    'GIT_WORK_TREE',
+    'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY',
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+    'GIT_COMMON_DIR',
+    'GIT_IMPLICIT_WORK_TREE',
+    'GIT_GRAFT_FILE',
+    'GIT_NO_REPLACE_OBJECTS',
+    'GIT_REPLACE_REF_BASE',
+    'GIT_PREFIX',
+    'GIT_SHALLOW_FILE',
+    'GIT_CONFIG',
+    'GIT_CONFIG_PARAMETERS',
+    'GIT_CONFIG_COUNT',
+  ];
+
+  it.skipIf(process.platform === 'win32')(
+    'removes each repository-local variable and keeps the other GIT_* ones',
+    async () => {
+      const bin = await project({ git: { content: '#!/bin/sh\nenv >> "$RONIN_TEST_LOG"\n', executable: true } });
+      const log = path.join(await project(), 'env.log');
+      vi.stubEnv('PATH', `${bin}${path.delimiter}${process.env.PATH ?? ''}`);
+      vi.stubEnv('RONIN_TEST_LOG', log);
+      for (const name of LOCAL_ENV_VARS) vi.stubEnv(name, 'leaked');
+      vi.stubEnv('GIT_SSH_COMMAND', 'ssh -i key');
+      vi.stubEnv('GIT_ASKPASS', 'askpass-helper');
+
+      await git(['status']);
+
+      const seen = new Map(
+        (await readFile(log, 'utf8'))
+          .split('\n')
+          .filter((line) => line.startsWith('GIT_'))
+          .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)] as const),
+      );
+      for (const name of LOCAL_ENV_VARS) expect(seen.has(name), name).toBe(false);
+      expect(seen.get('GIT_SSH_COMMAND')).toBe('ssh -i key');
+      expect(seen.get('GIT_ASKPASS')).toBe('askpass-helper');
+      expect(seen.get('GIT_TERMINAL_PROMPT')).toBe('0');
+    },
+  );
+
+  it('ensureCommit fills the cache and leaves the repository named by GIT_DIR/GIT_WORK_TREE alone', async () => {
+    const decoy = await upstream({ 'decoy.txt': 'decoy' });
+    const up = await upstream({ 'SKILL.md': SKILL_V1 });
+    const root = await project();
+    expect(decoy.commit).not.toBe(up.commit);
+
+    vi.stubEnv('GIT_DIR', path.join(decoy.dir, '.git'));
+    vi.stubEnv('GIT_WORK_TREE', decoy.dir);
+    vi.stubEnv('GIT_INDEX_FILE', path.join(decoy.dir, '.git', 'index'));
+    let dir: string;
+    try {
+      dir = await ensureCommit(root, 'up', up.url, up.commit);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    expect(dir).toBe(cachePath(root, 'up', up.commit));
+    expect(await readFile(path.join(dir, 'SKILL.md'), 'utf8')).toBe(SKILL_V1);
+    expect(await exists(path.join(dir, 'decoy.txt'))).toBe(false);
+    expect(await runGit(dir, ['rev-parse', 'HEAD'])).toBe(up.commit);
+
+    expect(await runGit(decoy.dir, ['symbolic-ref', '--short', 'HEAD'])).toBe('main');
+    expect(await runGit(decoy.dir, ['rev-parse', 'HEAD'])).toBe(decoy.commit);
+    expect(await runGit(decoy.dir, ['status', '--porcelain'])).toBe('');
+    expect(await runGit(decoy.dir, ['ls-files'])).toBe('decoy.txt');
+    expect(await exists(path.join(decoy.dir, '.git', 'FETCH_HEAD'))).toBe(false);
+    expect(await exists(path.join(decoy.dir, 'SKILL.md'))).toBe(false);
+  });
+});
+
 describe('resolveRef', () => {
   it('main resolves to the head commit', async () => {
     const up = await upstream({ 'a.txt': 'a' });
