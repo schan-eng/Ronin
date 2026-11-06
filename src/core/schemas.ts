@@ -77,7 +77,18 @@ export const AgentFrontmatterSchema = z.strictObject({
   targets: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
 });
 
+/**
+ * First-party `skills/<dir>/SKILL.md` frontmatter (spec 5.5). Only `name` and `description` are required; any
+ * other key is kept as written, since the open Agent Skills format defines more (`license`, `allowed-tools`,
+ * and so on). `name` is checked against the directory name (rule `NAME`) by the loader.
+ */
+export const SkillFrontmatterSchema = z.looseObject({
+  name: z.string(),
+  description: nonBlank,
+});
+
 export type RoninYaml = z.output<typeof RoninYamlSchema>;
 export type SourcesYaml = z.output<typeof SourcesYamlSchema>;
 export type PackYaml = z.output<typeof PackYamlSchema>;
 export type AgentFrontmatter = z.output<typeof AgentFrontmatterSchema>;
+export type SkillFrontmatter = z.output<typeof SkillFrontmatterSchema>;
